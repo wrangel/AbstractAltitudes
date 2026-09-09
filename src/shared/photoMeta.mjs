@@ -55,6 +55,17 @@ export function photoPath(item) {
  * Page title for a photo. Leads with the place, because that is what people
  * actually search for; the brand goes last where it can be truncated safely.
  *
+ * Altitude is part of the title, not decoration. Without it the title was just
+ * kind + place, which gave 119 photos only 75 distinct titles — thirteen pages
+ * all called "Aerial Photograph of Zürich, Switzerland". Combined with an
+ * identical rendered body, Google consolidated them under one canonical, and
+ * Search Console reported 27 such pages on 2026-09-09. Adding altitude takes
+ * the count to 114/119 for about nine characters.
+ *
+ * The remainder are genuine near-duplicates — five frames from one hover over
+ * Trégastel at the same height on the same day — which no metadata scheme
+ * separates, and arguably should not.
+ *
  * @param {Object} item - Portfolio item.
  * @returns {string} Title text (unescaped).
  */
@@ -63,7 +74,11 @@ export function photoTitle(item) {
   if (!place) return "Abstract Altitudes - Aerial Photography";
   const lead =
     item?.viewer === "pano" ? "360° Aerial Panorama" : "Aerial Photograph";
-  return `${lead} of ${place} | Abstract Altitudes`;
+  const altitude =
+    typeof item?.altitude === "number" && Number.isFinite(item.altitude)
+      ? ` at ${item.altitude.toFixed(0)} m`
+      : "";
+  return `${lead} of ${place}${altitude} | Abstract Altitudes`;
 }
 
 /**

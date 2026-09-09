@@ -169,6 +169,18 @@ test("titles lead with the place and distinguish panoramas", () => {
   );
 });
 
+test("titles include altitude, so same-place photos stay distinct", () => {
+  // Two Zürich shots differing only in height must not share a title. This is
+  // the exact shape that produced 13 identical titles and had Google
+  // consolidate them under one canonical.
+  const a = photoTitle(item({ location: "Zürich", region: "", altitude: 511 }));
+  const b = photoTitle(item({ location: "Zürich", region: "", altitude: 720 }));
+  assert.notEqual(a, b);
+  assert.match(a, /at 511 m/);
+  // Altitude is optional data; a title must still be produced without it.
+  assert.doesNotMatch(photoTitle(item({ altitude: undefined })), / at .* m/);
+});
+
 test("descriptions of complete records fill the displayed 120-160 window", () => {
   for (const over of [
     {},
@@ -419,4 +431,34 @@ test("the licence page exists at the URL the metadata advertises", () => {
   assert.match(page.html, /<link rel="canonical" href="https:\/\/[^"]*\/license\/"/);
   assert.match(page.html, /copyright/i, "states the terms");
   assert.match(page.html, /mailto:/, "offers a way to acquire a licence");
+});
+
+// ---------------------------------------------------------------------------
+// Regression guard against the real collection, not a fixture. Duplicate
+// titles are invisible in unit tests built from one item, but they are what
+// Search Console actually penalised.
+// ---------------------------------------------------------------------------
+test("the committed snapshot yields overwhelmingly distinct titles", async () => {
+  const fs = await import("node:fs/promises");
+  const url = new URL("../data/photos.json", import.meta.url);
+  const { items } = JSON.parse(await fs.readFile(url, "utf8"));
+
+  const titles = items.map(photoTitle);
+  const distinct = new Set(titles).size;
+  const ratio = distinct / titles.length;
+
+  // Was 75/119 (0.63) when Google folded 27 pages together; adding altitude
+  // takes it to 114/119 (0.958). The floor leaves room for genuine
+  // near-duplicates — repeat frames from one hover — without letting a
+  // regression back to place-only titles pass unnoticed.
+  assert.ok(
+    ratio >= 0.9,
+    `only ${distinct}/${titles.length} titles are distinct (${(ratio * 100).toFixed(1)}%)`,
+  );
+
+  // No single title may cover a large block of the collection.
+  const counts = new Map();
+  for (const t of titles) counts.set(t, (counts.get(t) ?? 0) + 1);
+  const worst = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  assert.ok(worst[1] <= 5, `"${worst[0]}" is used by ${worst[1]} photos`);
 });
