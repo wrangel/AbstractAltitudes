@@ -110,10 +110,29 @@ Create the two env-files in the root (see table above) and fill in the values.
 
 | Command       | Purpose                                                                                |
 | ------------- | -------------------------------------------------------------------------------------- |
-| `pnpm dev`    | Start backend + Vite frontend locally (no Docker)                                      |
-| `pnpm dev -u` | Same as above, but updates & audits deps first                                         |
-| `pnpm test`   | Build & run the full stack locally in Docker                                           |
-| `pnpm prod`   | Build images and push `wrangel/abstractaltitudes-{frontend,backend}:2.1` to Docker Hub |
+| `pnpm dev`      | Start backend + Vite frontend locally (no Docker)                                      |
+| `pnpm test:unit`| Unit tests for `src/shared/` (node:test, no framework)                                 |
+| `pnpm test`     | Build & run the full stack locally in Docker                                           |
+| `pnpm prod`     | Build images and push `wrangel/abstractaltitudes-{frontend,backend}:2.1` to Docker Hub |
+
+### Keeping things up to date
+
+Two separate concerns, deliberately not one command:
+
+| What                 | How                                                             |
+| -------------------- | --------------------------------------------------------------- |
+| Project dependencies | Dependabot PRs (`.github/dependabot.yml`) — CI runs the tests    |
+| Homebrew / this Mac  | `./scripts/update-mac.sh` (dry run) · `--apply` to upgrade       |
+
+`pnpm dev -u` used to do both. It deleted `pnpm-lock.yaml` and ran
+`pnpm up --latest`, which mattered because `Dockerfile.*` and CI install with
+`--frozen-lockfile` — so the lockfile decides what ships, and regenerating it
+unreviewed meant production got whatever was newest that morning. The flag now
+just prints where to go instead.
+
+Majors arrive as individual Dependabot PRs rather than grouped ones. CI does not
+run `frontend:build` (see the note in `ci.yml`), so a major bump to Vite, React
+or the viewers still wants a local `pnpm test` before merging.
 
 Management helpers:
 
