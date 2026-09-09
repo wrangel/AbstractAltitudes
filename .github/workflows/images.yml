@@ -74,13 +74,20 @@ jobs:
       # never ship the footer's "Browse by location" link with no /places/
       # pages behind it. With the committed snapshot present this cannot fail
       # for lack of an API.
+      # load, not push. `push: true` sends the image straight to the registry
+      # without ever putting it in the local daemon, so the smoke test below
+      # could not `docker run` it — on a pull request nothing was pushed
+      # either, and the step failed with "manifest unknown". Loading first
+      # means the image is tested before it is published, which is the right
+      # order anyway; the push happens after the test passes.
       - name: Frontend image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.frontend
           platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
+          load: true
+          push: false
           build-args: |
             VITE_API_URL=${{ vars.VITE_API_URL }}
             VITE_BUNNYCDN_BASE_URL=${{ vars.VITE_BUNNYCDN_BASE_URL }}
@@ -110,6 +117,13 @@ jobs:
           echo "sitemap URLs: $n"
           [ "$n" -gt 100 ] || fail "sitemap has only $n URLs — expected the full set"
           docker rm -f smoke
+
+      # Only now, once the image has proven it serves the prerendered pages.
+      - name: Push frontend
+        if: github.event_name != 'pull_request'
+        run: |
+          docker push "${FRONTEND_IMAGE}:${RELEASE_TAG}"
+          docker push "${FRONTEND_IMAGE}:sha-${{ steps.sha.outputs.short }}"
 
       - name: Summary
         if: github.event_name != 'pull_request'
