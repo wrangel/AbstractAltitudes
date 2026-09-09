@@ -101,9 +101,16 @@ jobs:
 
       # Cheap proof the frontend image is actually serving what we think it is.
       # No database needed — these are static files written by the prerender.
+      # --add-host is required, not cosmetic: nginx resolves the `backend`
+      # upstream in default.conf at startup and exits with
+      # "host not found in upstream" when it cannot, so the container will not
+      # boot standalone. Pointing the name at loopback lets nginx start; /api/
+      # then 502s, which is irrelevant here — this step only exercises the
+      # static files the prerender wrote.
       - name: Smoke-test the frontend image
         run: |
           docker run -d --name smoke -p 8080:80 \
+            --add-host backend:127.0.0.1 \
             "${FRONTEND_IMAGE}:sha-${{ steps.sha.outputs.short }}"
           for i in $(seq 1 30); do
             curl -sf http://localhost:8080/ >/dev/null && break
