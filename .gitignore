@@ -42,6 +42,12 @@ material/
 # Otherwise, deployment logic is usually tracked.
 scripts/prod-deploy.sh
 
+# Host-specific, and reach the NAS via Synology Drive rather than git — the
+# project folder there is a synced copy, not a clone, so ignoring them here
+# does not stop them being available where they run.
+scripts/deploy-synology.sh
+scripts/ensure-docker-dns.sh
+
 gather_code.js
 project_code_dump.md
 

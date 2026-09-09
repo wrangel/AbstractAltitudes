@@ -25,25 +25,27 @@ set +e # Temporarily disable strict error checking
 
 pnpm self-update --silent > /dev/null 2>&1 || true
 
-# FULL UPGRADE (-u flag)
+echo -e "${GREEN}✅ Ensuring dependencies are up to date...${NC}"
+pnpm install --ignore-scripts
+
+echo -e "${GREEN}🔒 Running security audit...${NC}"
+pnpm audit --prod --silent || true
+
+# The old `-u` flag upgraded Homebrew AND deleted pnpm-lock.yaml before running
+# `pnpm up --latest`. Both are gone on purpose:
+#
+#   • Dockerfile.* and ci.yml install with --frozen-lockfile, so the lockfile
+#     decides what ships. Regenerating it unreviewed meant production got
+#     whatever was newest that morning.
+#   • Dependency updates now arrive as Dependabot PRs (.github/dependabot.yml)
+#     that CI has actually run the tests against.
+#   • Homebrew is per-machine maintenance, not part of starting a dev server —
+#     upgrading it here could swap ImageMagick out from under the uploader
+#     mid-session. Use scripts/update-mac.sh instead.
 if [[ "$1" == "-u" ]]; then
-  echo -e "${GREEN}🚀📦 FULL UPGRADE: Latest secure packages...${NC}"
-  if command -v brew &> /dev/null; then
-    brew update && brew upgrade && brew cleanup && brew autoremove
-  fi
-  corepack prepare pnpm@latest --activate 2>/dev/null
-  
-  rm -rf node_modules pnpm-lock.yaml
-  echo -e "${GREEN}📈 Updating ALL packages to LATEST...${NC}"
-  pnpm up --latest
-  pnpm install --ignore-scripts
-  
-  echo -e "${GREEN}🔒 Running security audit...${NC}"
-  pnpm audit --prod --silent || true
-  pnpm prune || true
-else
-  echo -e "${GREEN}✅ Ensuring dependencies are up to date...${NC}"
-  pnpm install --ignore-scripts
+  echo -e "${YELLOW}ℹ️  -u no longer upgrades anything.${NC}"
+  echo -e "${YELLOW}   Dependencies → Dependabot PRs on GitHub.${NC}"
+  echo -e "${YELLOW}   Homebrew     → ./scripts/update-mac.sh${NC}"
 fi
 
 set -e # Re-enable strict error checking for static analysis and servers

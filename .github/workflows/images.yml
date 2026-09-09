@@ -1,0 +1,128 @@
+name: Images
+
+# Builds both Docker images, and pushes them on main.
+#
+# This replaces the build-and-push half of scripts/prod-build.sh. That script
+# still works and stays as a manual escape hatch, but the normal path is now:
+#
+#   merge to main  →  this workflow builds + pushes  →  deploy on the Synology
+#
+# Two things make building here possible at all:
+#   • data/photos.json is committed, so scripts/prerender-photos.mjs does not
+#     need to reach the live API during the build (see README).
+#   • The runner is amd64, matching `platform: linux/amd64` in
+#     docker-compose.yml — no QEMU emulation, unlike building on an M-series Mac.
+#
+# Pull requests build but do NOT push. That deliberately closes the gap noted in
+# ci.yml: unit tests never exercise `frontend:build`, but building the frontend
+# image does, so a broken prerender or Vite config fails here before merging.
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  BACKEND_IMAGE: wrangel/abstractaltitudes-backend
+  FRONTEND_IMAGE: wrangel/abstractaltitudes-frontend
+  # Matches the tag hard-coded in docker-compose.yml, so the Synology keeps
+  # working unchanged. Each build also gets a sha- tag for rollback.
+  RELEASE_TAG: "2.1"
+
+jobs:
+  images:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Only main publishes. PRs build to verify and stop there.
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Short SHA
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.backend
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:${{ env.RELEASE_TAG }}
+            ${{ env.BACKEND_IMAGE }}:sha-${{ steps.sha.outputs.short }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+      # REQUIRE_PRERENDER stays at its default of 1: a production image must
+      # never ship the footer's "Browse by location" link with no /places/
+      # pages behind it. With the committed snapshot present this cannot fail
+      # for lack of an API.
+      - name: Frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.frontend
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          build-args: |
+            VITE_API_URL=${{ vars.VITE_API_URL }}
+            VITE_BUNNYCDN_BASE_URL=${{ vars.VITE_BUNNYCDN_BASE_URL }}
+            VITE_GOOGLE_MAPS_API_KEY=${{ secrets.VITE_GOOGLE_MAPS_API_KEY }}
+            SITE_ORIGIN=${{ vars.SITE_ORIGIN }}
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:${{ env.RELEASE_TAG }}
+            ${{ env.FRONTEND_IMAGE }}:sha-${{ steps.sha.outputs.short }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
+
+      # Cheap proof the frontend image is actually serving what we think it is.
+      # No database needed — these are static files written by the prerender.
+      - name: Smoke-test the frontend image
+        run: |
+          docker run -d --name smoke -p 8080:80 \
+            "${FRONTEND_IMAGE}:sha-${{ steps.sha.outputs.short }}"
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/ >/dev/null && break
+            sleep 1
+          done
+          fail() { echo "::error::$1"; docker logs smoke; exit 1; }
+          curl -sf http://localhost:8080/ >/dev/null || fail "/ did not serve"
+          curl -sf http://localhost:8080/places/ >/dev/null || fail "/places/ missing — prerender did not run"
+          curl -sf http://localhost:8080/license/ >/dev/null || fail "/license/ missing"
+          n=$(curl -s http://localhost:8080/sitemap.xml | grep -c "<loc>")
+          echo "sitemap URLs: $n"
+          [ "$n" -gt 100 ] || fail "sitemap has only $n URLs — expected the full set"
+          docker rm -f smoke
+
+      - name: Summary
+        if: github.event_name != 'pull_request'
+        run: |
+          {
+            echo "### Pushed"
+            echo ""
+            echo '```'
+            echo "${BACKEND_IMAGE}:${RELEASE_TAG}"
+            echo "${BACKEND_IMAGE}:sha-${{ steps.sha.outputs.short }}"
+            echo "${FRONTEND_IMAGE}:${RELEASE_TAG}"
+            echo "${FRONTEND_IMAGE}:sha-${{ steps.sha.outputs.short }}"
+            echo '```'
+            echo ""
+            echo "Ready to deploy. Pull and recreate the stack on the host."
+          } >> "$GITHUB_STEP_SUMMARY"
